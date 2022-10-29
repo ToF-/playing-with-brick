@@ -28,6 +28,7 @@ dependencies:
 - vty
 - text-zipper >= 0.12
 - text
+- vector
 
 ghc-options:
 - -Wall

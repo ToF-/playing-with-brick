@@ -39,6 +39,7 @@ library
     , microlens-th
     , text
     , text-zipper >=0.12
+    , vector
     , vty
   default-language: Haskell2010
 
@@ -58,6 +59,7 @@ executable playing-with-brick-exe
     , playing-with-brick
     , text
     , text-zipper >=0.12
+    , vector
     , vty
   default-language: Haskell2010
 
@@ -78,5 +80,6 @@ test-suite playing-with-brick-test
     , playing-with-brick
     , text
     , text-zipper >=0.12
+    , vector
     , vty
   default-language: Haskell2010

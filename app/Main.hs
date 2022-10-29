@@ -10,6 +10,7 @@ import Lens.Micro.TH
 import Data.Monoid ((<>))
 #endif
 
+import Data.Vector ( Vector, fromList )
 import qualified Graphics.Vty as V
 import Brick
 import Brick.Forms
@@ -25,6 +26,7 @@ import Brick.Forms
   , focusedFormInputAttr
   , invalidFormInputAttr
   , checkboxField
+  , listField
   , radioField
   , editShowableField
   , editTextField
@@ -35,9 +37,11 @@ import Brick.Focus
   ( focusGetCurrent
   , focusRingCursor
   )
+import qualified Brick.AttrMap as A
 import qualified Brick.Widgets.Edit as E
 import qualified Brick.Widgets.Border as B
 import qualified Brick.Widgets.Center as C
+import qualified Brick.Widgets.List as L
 
 data Name = NameField
           | AgeField
@@ -48,10 +52,13 @@ data Name = NameField
           | RightHandField
           | AmbiField
           | AddressField
-          | CountriesField
+          | CountryField
           deriving (Eq, Ord, Show)
 
 data Handedness = LeftHanded | RightHanded | Ambidextrous
+                deriving (Show, Eq)
+
+data Country = France | Italy | Germany | Spain | UnitedKindom | Belgium | Switzerland | Luxembourg
                 deriving (Show, Eq)
 
 data UserInfo =
@@ -61,6 +68,7 @@ data UserInfo =
              , _ridesBike :: Bool
              , _handed    :: Handedness
              , _password  :: T.Text
+             , _country   :: Maybe Country
              }
              deriving (Show)
 
@@ -88,7 +96,22 @@ mkForm =
                                      ]
                , label "" @@=
                    checkboxField ridesBike BikeField "Do you ride a bicycle?"
+               , label "Country" @@=
+                   listField countries country listDrawElement 1 CountryField
                ]
+
+countries :: UserInfo -> Vector Country
+countries = const (fromList [ France , Italy , Germany , Spain , UnitedKindom , Belgium , Switzerland , Luxembourg ])
+
+customAttr :: A.AttrName
+customAttr = L.listSelectedAttr <> A.attrName "custom"
+
+listDrawElement :: Bool -> Country -> Widget Name
+listDrawElement sel country =
+    let selStr s = if sel
+                      then withAttr customAttr (str $ "<" <> s <> ">")
+                      else str s
+    in C.hCenter $ selStr $ show country
 
 theMap :: AttrMap
 theMap = attrMap V.defAttr
@@ -119,14 +142,8 @@ app =
             case ev of
                 VtyEvent (V.EvResize {}) -> return ()
                 VtyEvent (V.EvKey V.KEsc []) -> if allValid then halt else return ()
-                -- Enter quits only when we aren't in the multi-line editor.
-                VtyEvent (V.EvKey V.KEnter [])
-                    | focusGetCurrent f /= Just AddressField -> halt
                 _ -> do
                     handleFormEvent ev
-
-                    -- Example of external validation:
-                    -- Require age field to contain a value that is at least 18.
                     st <- gets formState
                     modify $ setFieldValid (T.strip (st^.name) /= T.empty) NameField
                     modify $ setFieldValid (st^.age >= 18 && st^.age <= 105) AgeField
@@ -149,6 +166,7 @@ main = do
                                    , _handed = RightHanded
                                    , _ridesBike = False
                                    , _password = ""
+                                   , _country = Just Germany
                                    }
         f = setFieldValid False AgeField $
             mkForm initialUserInfo

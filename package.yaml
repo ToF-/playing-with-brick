@@ -27,6 +27,7 @@ dependencies:
 - microlens-mtl
 - vty
 - text-zipper >= 0.12
+- text
 
 ghc-options:
 - -Wall

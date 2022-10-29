@@ -1,95 +1,168 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Lens.Micro
+import qualified Data.Text as T
+import Lens.Micro ((^.))
 import Lens.Micro.TH
-import Lens.Micro.Mtl
+#if !(MIN_VERSION_base(4,11,0))
+import Data.Monoid ((<>))
+#endif
+
 import qualified Graphics.Vty as V
-
-import qualified Brick.Main as M
-import qualified Brick.Types as T
-import Brick.Widgets.Core
-  ( (<+>)
-  , (<=>)
-  , hLimit
-  , vLimit
-  , str
+import Brick
+import Brick.Forms
+  ( Form
+  , newForm
+  , formState
+  , formFocus
+  , setFieldValid
+  , renderForm
+  , handleFormEvent
+  , invalidFields
+  , allFieldsValid
+  , focusedFormInputAttr
+  , invalidFormInputAttr
+  , checkboxField
+  , radioField
+  , editShowableField
+  , editTextField
+  , editPasswordField
+  , (@@=)
   )
-import qualified Brick.Widgets.Center as C
+import Brick.Focus
+  ( focusGetCurrent
+  , focusRingCursor
+  )
 import qualified Brick.Widgets.Edit as E
-import qualified Brick.AttrMap as A
-import qualified Brick.Focus as F
-import Brick.Util (on)
+import qualified Brick.Widgets.Border as B
+import qualified Brick.Widgets.Center as C
 
-data Name = Edit1
-          | Edit2
-          deriving (Ord, Show, Eq)
+data Name = NameField
+          | AgeField
+          | BikeField
+          | HandedField
+          | PasswordField
+          | LeftHandField
+          | RightHandField
+          | AmbiField
+          | AddressField
+          | CountriesField
+          deriving (Eq, Ord, Show)
 
-data St =
-    St { _focusRing :: F.FocusRing Name
-       , _edit1 :: E.Editor String Name
-       , _edit2 :: E.Editor String Name
-       }
+data Handedness = LeftHanded | RightHanded | Ambidextrous
+                deriving (Show, Eq)
 
-makeLenses ''St
+data UserInfo =
+    UserInfo { _name      :: T.Text
+             , _age       :: Int
+             , _address   :: T.Text
+             , _ridesBike :: Bool
+             , _handed    :: Handedness
+             , _password  :: T.Text
+             }
+             deriving (Show)
 
-drawUI :: St -> [T.Widget Name]
-drawUI st = [ui]
+makeLenses ''UserInfo
+
+-- This form is covered in the Brick User Guide; see the "Input Forms"
+-- section.
+mkForm :: UserInfo -> Form UserInfo e Name
+mkForm =
+    let label s w = padBottom (Pad 1) $
+                    (vLimit 1 $ hLimit 15 $ str s <+> fill ' ') <+> w
+    in newForm [ label "Name" @@=
+                   editTextField name NameField (Just 1)
+               , label "Address" @@=
+                 B.borderWithLabel (str "Mailing") @@=
+                   editTextField address AddressField (Just 3)
+               , label "Age" @@=
+                   editShowableField age AgeField
+               , label "Password" @@=
+                   editPasswordField password PasswordField
+               , label "Dominant hand" @@=
+                   radioField handed [ (LeftHanded, LeftHandField, "Left")
+                                     , (RightHanded, RightHandField, "Right")
+                                     , (Ambidextrous, AmbiField, "Both")
+                                     ]
+               , label "" @@=
+                   checkboxField ridesBike BikeField "Do you ride a bicycle?"
+               ]
+
+theMap :: AttrMap
+theMap = attrMap V.defAttr
+  [ (E.editAttr, V.white `on` V.black)
+  , (E.editFocusedAttr, V.black `on` V.yellow)
+  , (invalidFormInputAttr, V.white `on` V.red)
+  , (focusedFormInputAttr, V.black `on` V.yellow)
+  ]
+
+draw :: Form UserInfo e Name -> [Widget Name]
+draw f = [C.vCenter $ C.hCenter form <=> C.hCenter help]
     where
-        e1 = F.withFocusRing (st^.focusRing) (E.renderEditor (str . unlines)) (st^.edit1)
-        e2 = F.withFocusRing (st^.focusRing) (E.renderEditor (str . unlines)) (st^.edit2)
+        form = B.border $ padTop (Pad 1) $ hLimit 50 $ renderForm f
+        help = padTop (Pad 1) $ B.borderWithLabel (str "Help") body
+        body = str $ "- Name is free-form text\n" <>
+                     "- Age must be an integer (try entering an\n" <>
+                     "  invalid age!)\n" <>
+                     "- Handedness selects from a list of options\n" <>
+                     "- The last option is a checkbox\n" <>
+                     "- Enter/Esc quit, mouse interacts with fields"
 
-        ui = C.center $
-            (str "Input 1 (unlimited): " <+> (hLimit 30 $ vLimit 5 e1)) <=>
-            str " " <=>
-            (str "Input 2 (limited to 2 lines): " <+> (hLimit 30 e2)) <=>
-            str " " <=>
-            str "Press Tab to switch between editors, Esc to quit."
+app :: App (Form UserInfo e Name) e Name
+app =
+    App { appDraw = draw
+        , appHandleEvent = \ev -> do
+            f <- gets formFocus
+            allValid <- gets allFieldsValid
+            case ev of
+                VtyEvent (V.EvResize {}) -> return ()
+                VtyEvent (V.EvKey V.KEsc []) -> if allValid then halt else return ()
+                -- Enter quits only when we aren't in the multi-line editor.
+                VtyEvent (V.EvKey V.KEnter [])
+                    | focusGetCurrent f /= Just AddressField -> halt
+                _ -> do
+                    handleFormEvent ev
 
-appEvent :: T.BrickEvent Name e -> T.EventM Name St ()
-appEvent (T.VtyEvent (V.EvKey V.KEsc [])) =
-    M.halt
-appEvent (T.VtyEvent (V.EvKey (V.KChar '\t') [])) =
-    focusRing %= F.focusNext
-appEvent (T.VtyEvent (V.EvKey V.KBackTab [])) =
-    focusRing %= F.focusPrev
-appEvent ev = do
-    r <- use focusRing
-    case F.focusGetCurrent r of
-      Just Edit1 -> zoom edit1 $ E.handleEditorEvent ev
-      Just Edit2 -> zoom edit2 $ E.handleEditorEvent ev
-      Nothing -> return ()
+                    -- Example of external validation:
+                    -- Require age field to contain a value that is at least 18.
+                    st <- gets formState
+                    modify $ setFieldValid (T.strip (st^.name) /= T.empty) NameField
+                    modify $ setFieldValid (st^.age >= 18 && st^.age <= 105) AgeField
 
-initialState :: St
-initialState =
-    St (F.focusRing [Edit1, Edit2])
-       (E.editor Edit1 Nothing "")
-       (E.editor Edit2 (Just 2) "")
-
-theMap :: A.AttrMap
-theMap = A.attrMap V.defAttr
-    [ (E.editAttr,                   V.white `on` V.blue)
-    , (E.editFocusedAttr,            V.black `on` V.yellow)
-    ]
-
-appCursor :: St -> [T.CursorLocation Name] -> Maybe (T.CursorLocation Name)
-appCursor = F.focusRingCursor (^.focusRing)
-
-theApp :: M.App St e Name
-theApp =
-    M.App { M.appDraw = drawUI
-          , M.appChooseCursor = appCursor
-          , M.appHandleEvent = appEvent
-          , M.appStartEvent = return ()
-          , M.appAttrMap = const theMap
-          }
+        , appChooseCursor = focusRingCursor formFocus
+        , appStartEvent = return ()
+        , appAttrMap = const theMap
+        }
 
 main :: IO ()
 main = do
-    st <- M.defaultMain theApp initialState
-    putStrLn "In input 1 you entered:\n"
-    putStrLn $ unlines $ E.getEditContents $ st^.edit1
-    putStrLn "In input 2 you entered:\n"
-    putStrLn $ unlines $ E.getEditContents $ st^.edit2
+    let buildVty = do
+          v <- V.mkVty =<< V.standardIOConfig
+          V.setMode (V.outputIface v) V.Mouse True
+          return v
+
+        initialUserInfo = UserInfo { _name = ""
+                                   , _address = ""
+                                   , _age = 0
+                                   , _handed = RightHanded
+                                   , _ridesBike = False
+                                   , _password = ""
+                                   }
+        f = setFieldValid False AgeField $
+            mkForm initialUserInfo
+
+    initialVty <- buildVty
+    f' <- customMain initialVty buildVty Nothing app f
+
+    putStrLn "The starting form state was:"
+    print initialUserInfo
+
+    putStrLn "The final form state was:"
+    print $ formState f'
+
+    if allFieldsValid f'
+       then putStrLn "The final form inputs were valid."
+       else putStrLn "The final form inputs were invalid."
+
